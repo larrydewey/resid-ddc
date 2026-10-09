@@ -33,10 +33,10 @@ scripts/ddc.sh ../resid        # path to a Resid checkout
 
 == runtime: residi lowers runtime/rt/rt.resid
    7s
-   IDENTICAL to build/boot/rt.ll (f6a82dab92ebe84e)
+   IDENTICAL to build/boot/rt.ll (d3364104a293fab5)
 ```
 
-That run used Resid at `7e8fc3f` and Go 1.27. The script exits nonzero if
+That run used Resid at `02c8c74` and Go 1.27. The script exits nonzero if
 either artifact differs.
 
 ## What is trusted
@@ -93,24 +93,24 @@ scripts/compare-cases.sh ../resid [REGEX]
 
 This compiles every case in `tests/conformance/cases` twice: once with the
 native compiler and once with the compiler running under `residi`. It
-compares the IR, or the diagnostics when compilation fails. At `7e8fc3f`,
-395 of 401 cases agree. The other six:
+compares the IR, or the diagnostics when compilation fails. At `02c8c74`,
+396 of 401 cases agree. The other five depend on the reducer's memory
+budget: `dt_calendar`, `loop_regions_lists`, `reduce_known_names`,
+`scalar_scopes` and `regex_basics`.
 
-- **The reducer's memory budget (5 cases):** `dt_calendar`,
-  `loop_regions_lists`, `reduce_known_names`, `scalar_scopes` and
-  `regex_basics`. Compile-time reduction stops after 512 MB of *native*
-  allocation (`rd_max_mem` in `compiler/reduce.resid`, measured by
-  `resid_mem_since_mark`). That is a property of the native runtime that an
-  independent implementation cannot reproduce byte for byte. `residi`
-  never spends the budget, so it folds more. A native compiler built with
-  the budget lifted produces the interpreter's IR for the first three. The
-  other two exhaust native's 4 GB limit without the budget. The
-  self-compile never reaches the budget, which is why its IR matches.
-- **`unicode_case_mapping`:** a real discrepancy, found by this check. The
-  runtime's hand-written SpecialCasing table (`tools/gen_case_tables.py`)
-  has wrong entries for U+1F90–1F9F, U+1FA0–1FAF and U+1FB2–1FFC. For
-  example, `str_to_upper("ᾨ")` gives `ᾨΙ` where Unicode gives `ὨΙ`.
-  `residi` follows Unicode.
+Compile-time reduction stops after 512 MB of *native* allocation
+(`rd_max_mem` in `compiler/reduce.resid`, measured by
+`resid_mem_since_mark`). That is a property of the native runtime that an
+independent implementation cannot reproduce byte for byte. `residi` never
+spends the budget, so it folds more. A native compiler built with the
+budget lifted produces the interpreter's IR for the first three. The other
+two exhaust native's 4 GB limit without the budget. The self-compile never
+reaches the budget, which is why its IR matches.
+
+The check has already found one real bug. Resid's runtime carried a
+hand-typed SpecialCasing table with wrong entries for U+1F90–1FFC, so
+`str_to_upper("ᾨ")` gave `ᾨΙ` where Unicode gives `ὨΙ`. It is fixed in
+Resid `02c8c74`, which derives the table from Unicode data.
 
 ## Diagnostics
 
