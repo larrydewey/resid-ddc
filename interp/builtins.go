@@ -818,6 +818,10 @@ func (in *Interp) builtin(name string, argc int) builtinFn {
 	case "resid_arena_push", "resid_arena_pop", "resid_bulk_push", "resid_bulk_pop",
 		"resid_mem_mark", "resid_mem_since_mark", "resid_mem_limit_set":
 		return func([]Value) Value { return int64(0) }
+	// The stack floor is the native runtime's: unknown here, so the reducer
+	// never stops on it (residi's Go stack grows instead).
+	case "resid_stack_left":
+		return func([]Value) Value { return int64(-1) }
 	case "resid_list_str_persist_copy", "resid_dec_persist", "ct_public", "ct_hide":
 		return func(a []Value) Value { return a[0] }
 	case "resid_rtmod", "resid_internals", "resid_quiet":

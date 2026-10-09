@@ -93,19 +93,17 @@ scripts/compare-cases.sh ../resid [REGEX]
 
 This compiles every case in `tests/conformance/cases` twice: once with the
 native compiler and once with the compiler running under `residi`. It
-compares the IR, or the diagnostics when compilation fails. At `02c8c74`,
-396 of 401 cases agree. The other five depend on the reducer's memory
-budget: `dt_calendar`, `loop_regions_lists`, `reduce_known_names`,
-`scalar_scopes` and `regex_basics`.
+compares the IR, or the diagnostics when compilation fails.
 
-Compile-time reduction stops after 512 MB of *native* allocation
-(`rd_max_mem` in `compiler/reduce.resid`, measured by
-`resid_mem_since_mark`). That is a property of the native runtime that an
-independent implementation cannot reproduce byte for byte. `residi` never
-spends the budget, so it folds more. A native compiler built with the
-budget lifted produces the interpreter's IR for the first three. The other
-two exhaust native's 4 GB limit without the budget. The self-compile never
-reaches the budget, which is why its IR matches.
+At `02c8c74`, 396 of 401 cases agreed. The other five (`dt_calendar`,
+`loop_regions_lists`, `reduce_known_names`, `scalar_scopes`, `regex_basics`)
+depended on a reducer budget measured in *native* allocation, which an
+independent implementation cannot reproduce. Since Resid `98c3106` every
+reduction budget counts work (steps, calls, the size of the values the
+evaluator builds), so those five agree, as do the new reducer cases. The
+compiler's stack is the one native resource it consults (`resid_stack_left`).
+Running past it is a build error, never a different result, and `residi`
+reports it as unknown (-1).
 
 The check has already found one real bug. Resid's runtime carried a
 hand-typed SpecialCasing table with wrong entries for U+1F90–1FFC, so
