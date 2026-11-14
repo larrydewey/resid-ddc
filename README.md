@@ -28,15 +28,15 @@ scripts/ddc.sh ../resid        # path to a Resid checkout
 
 ```
 == compiler: residi runs compiler/driver.resid on itself
-   500s
-   IDENTICAL to build/boot/seed.ll (4c3c382aeea6fc07)
+   519s
+   IDENTICAL to build/boot/seed.ll (e9a752129d13639d)
 
 == runtime: residi lowers runtime/rt/rt.resid
    12s
-   IDENTICAL to build/boot/rt.ll (e3d0dee8270feba6)
+   IDENTICAL to build/boot/rt.ll (3205f0c74501eb8a)
 ```
 
-That run used Resid at `3f36ddaa` (v0.8.1) and Go 1.27. Since v0.8.1 the seed holds no checkout path, so the check works on a clone anywhere. The script exits nonzero if
+That run used Resid at `cde16019` (v0.8.2) and Go 1.27. Since v0.8.1 the seed holds no checkout path, so the check works on a clone anywhere. The script exits nonzero if
 either artifact differs.
 
 ## What is trusted
@@ -98,7 +98,7 @@ This compiles every case in `tests/conformance/cases` twice: once with the
 native compiler and once with the compiler running under `residi`. It
 compares the IR, or the diagnostics when compilation fails.
 
-At `3f36ddaa` (v0.8.1), all 647 cases agree. At `02c8c74`, 396 of 401 cases agreed. The other five (`dt_calendar`,
+At `cde16019` (v0.8.2), all 648 cases agree. At `02c8c74`, 396 of 401 cases agreed. The other five (`dt_calendar`,
 `loop_regions_lists`, `reduce_known_names`, `scalar_scopes`, `regex_basics`)
 depended on a reducer budget measured in *native* allocation, which an
 independent implementation cannot reproduce. Since Resid `98c3106` every
@@ -108,10 +108,16 @@ compiler's stack is the one native resource it consults (`resid_stack_left`).
 Running past it is a build error, never a different result, and `residi`
 reports it as unknown (-1).
 
-The check has already found one real bug. Resid's runtime carried a
-hand-typed SpecialCasing table with wrong entries for U+1F90–1FFC, so
-`str_to_upper("ᾨ")` gave `ᾨΙ` where Unicode gives `ὨΙ`. It is fixed in
-Resid `02c8c74`, which derives the table from Unicode data.
+The check has found two real bugs in Resid's runtime, each where `residi`
+works from a definition and the runtime had drifted from it:
+
+- A hand-typed SpecialCasing table had wrong entries for U+1F90–1FFC, so
+  `str_to_upper("ᾨ")` gave `ᾨΙ` where Unicode gives `ὨΙ`. It is fixed in
+  Resid `02c8c74`, which derives the table from Unicode data.
+- `resid_fmt_group` copied only a number's integer digits, so any number
+  with four or more of them lost its sign and its fraction:
+  `f"{-1234:group, plus}"` gave `+1,234` and `f"{1234567.25:group}"` gave
+  `1,234,567`. It is fixed in Resid v0.8.2 (`cde16019`).
 
 ## Diagnostics
 
