@@ -152,6 +152,18 @@ func (in *Interp) fnFor(mod *Module, name string) *FnDecl {
 	return in.prog.Pub[name]
 }
 
+// typeFor finds a record type as the current module sees it: its own
+// declaration first (two modules may each keep a private type of one name),
+// then the program's.
+func (c *cctx) typeFor(name string) *TypeDecl {
+	if c.mod != nil {
+		if td, ok := c.mod.Types[name]; ok {
+			return td
+		}
+	}
+	return c.in.prog.Types[name]
+}
+
 func (in *Interp) cfuncOf(d *FnDecl) *cfunc {
 	if cf, ok := in.fns[d]; ok {
 		return cf
@@ -428,7 +440,7 @@ func (c *cctx) stmt(s Stmt) stmtFn {
 		}
 	case *SDestr:
 		x := c.expr(st.X)
-		td := c.in.prog.Types[st.TypeName]
+		td := c.typeFor(st.TypeName)
 		if td == nil {
 			panic(fmt.Sprintf("unknown type %s in destructuring", st.TypeName))
 		}
@@ -723,6 +735,8 @@ func (c *cctx) expr(e Expr) evalFn {
 		return c.match(x)
 	case *ELambda:
 		return c.lambda(x)
+	case *ESpawn:
+		return c.spawn(x)
 	case *EStruct:
 		return c.structLit(x)
 	case *EList:
@@ -870,6 +884,22 @@ func (c *cctx) lambda(x *ELambda) evalFn {
 	}
 }
 
+// spawn runs the region's body at once, as a closure over the enclosing
+// frame applied to nothing; a region never fails here, so it is always Ok.
+// Its captures list only bounds authority, which residi does not enforce.
+func (c *cctx) spawn(x *ESpawn) evalFn {
+	sub := &cctx{in: c.in, mod: c.mod, parent: c}
+	sub.push()
+	body := sub.block(x.Body, true)
+	cf := &cfunc{name: "spawn", body: body, ready: true, usesTry: sub.usesTry}
+	return func(fr *Frame) Value {
+		cf.nslots = sub.nslots
+		env := make([]Value, len(fr.slots))
+		copy(env, fr.slots)
+		return &Var{V: vOk, P: []Value{c.in.call(cf, nil, env)}}
+	}
+}
+
 func (in *Interp) apply(f Value, args []Value) Value {
 	cl, ok := f.(*Closure)
 	if !ok {
@@ -882,7 +912,7 @@ func (in *Interp) apply(f Value, args []Value) Value {
 }
 
 func (c *cctx) structLit(x *EStruct) evalFn {
-	td := c.in.prog.Types[x.Name]
+	td := c.typeFor(x.Name)
 	if td == nil || td.Kind != "struct" {
 		panic(fmt.Sprintf("%s: unknown record type %s", c.mod.Path, x.Name))
 	}

@@ -28,15 +28,15 @@ scripts/ddc.sh ../resid        # path to a Resid checkout
 
 ```
 == compiler: residi runs compiler/driver.resid on itself
-   30s
-   IDENTICAL to build/boot/seed.ll (d4d35c4f5457e5f5)
+   500s
+   IDENTICAL to build/boot/seed.ll (4c3c382aeea6fc07)
 
 == runtime: residi lowers runtime/rt/rt.resid
-   7s
-   IDENTICAL to build/boot/rt.ll (d3364104a293fab5)
+   12s
+   IDENTICAL to build/boot/rt.ll (e3d0dee8270feba6)
 ```
 
-That run used Resid at `02c8c74` and Go 1.27. The script exits nonzero if
+That run used Resid at `3f36ddaa` (v0.8.1) and Go 1.27. Since v0.8.1 the seed holds no checkout path, so the check works on a clone anywhere. The script exits nonzero if
 either artifact differs.
 
 ## What is trusted
@@ -81,9 +81,12 @@ either artifact differs.
   `clang`, after it has written its `.ll`.
 
 Region and arena controls (`resid_arena_*`, `resid_bulk_*`) do nothing
-here, because Go collects garbage. The raw-memory builtins are not
-supported. Only the language server (`residc lsp`) uses them, and DDC never
-runs it.
+here, because Go collects garbage. A `spawn` region runs at once, as a
+closure over the enclosing frame, and is always `Ok`: a region cannot run
+out of memory here. Raw memory (`resid_raw_global`, `_load*`, `_store*`) is
+a sparse byte map, which is all the compiler needs for its few global words.
+`resid_raw_syscall` answers only getpid (39), which names the runtime
+cache's temporary file; any other system call stops `residi`.
 
 ## Cross-checking on the conformance suite
 
@@ -95,7 +98,7 @@ This compiles every case in `tests/conformance/cases` twice: once with the
 native compiler and once with the compiler running under `residi`. It
 compares the IR, or the diagnostics when compilation fails.
 
-At `02c8c74`, 396 of 401 cases agreed. The other five (`dt_calendar`,
+At `3f36ddaa` (v0.8.1), all 647 cases agree. At `02c8c74`, 396 of 401 cases agreed. The other five (`dt_calendar`,
 `loop_regions_lists`, `reduce_known_names`, `scalar_scopes`, `regex_basics`)
 depended on a reducer budget measured in *native* allocation, which an
 independent implementation cannot reproduce. Since Resid `98c3106` every

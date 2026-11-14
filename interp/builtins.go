@@ -292,9 +292,202 @@ func (c *cctx) fstr(x *EFStr) evalFn {
 	}
 }
 
+// fmtSpec writes a hole with a spec as the compiler lowers it (lw_fmt in
+// compiler/lower.resid): the value's text, then radix, grouping, case, sign
+// and width, each through the runtime primitive in fmt.go.
 func fmtSpec(v Value, spec string) string {
-	abort("f-string spec {:" + spec + "} not supported by the interpreter")
-	return ""
+	sp := parseSpec(spec)
+	var num, isFloat bool
+	switch v.(type) {
+	case int64, *Num:
+		num = true
+	case float64:
+		num, isFloat = true, true
+	case *StrV, bool:
+	default:
+		abort(fmt.Sprintf("f-string spec {:%s} on a %T is not supported by the interpreter", spec, v))
+	}
+	if sp.trim {
+		abort("f-string spec `trim` (a Dec) is not supported by the interpreter")
+	}
+	word := sp.pack(num)
+	styled := isFloat && (sp.style == fmDecimal || sp.style == fmScientific || sp.style == fmPercent || sp.hasprec)
+	var t string
+	if styled {
+		t = fmtStyle(v.(float64), word)
+	} else {
+		t = show(v)
+	}
+	if sp.base != 10 {
+		t = fmtRadix(t, word)
+	}
+	if sp.group {
+		t = fmtGroup(t)
+	}
+	if sp.cs != 0 {
+		t = fmtCase(t, sp.pack(false))
+	}
+	if !styled && (sp.sign == 1 || sp.sign == 2) {
+		t = fmtSign(t, sp.pack(false))
+	}
+	if sp.hasw || sp.align != -1 || sp.fill != 0 {
+		t = fmtPad(t, word)
+	}
+	return t
+}
+
+// fspec is a parsed hole spec, as fs_parse in compiler/fmt.resid reads it.
+type fspec struct {
+	width, align, base, sign, prec int
+	hasw, hasprec, group, trim     bool
+	cs, style                      int64
+	fill                           rune
+}
+
+func parseSpec(text string) fspec {
+	sp := fspec{align: -1, base: 10}
+	if strings.TrimSpace(text) == "." {
+		sp.trim = true
+		return sp
+	}
+	for _, it := range splitSpec(text) {
+		it = strings.TrimSpace(it)
+		if it == "" {
+			continue
+		}
+		if it[0] >= '0' && it[0] <= '9' {
+			sp.width, sp.hasw = specDigits(it, it), true
+			continue
+		}
+		if it[0] == '.' {
+			sp.prec, sp.hasprec = specDigits(it[1:], it), true
+			continue
+		}
+		w := it
+		if i := strings.IndexFunc(it, func(r rune) bool { return !isSpecWordRune(r) }); i >= 0 {
+			w = it[:i]
+		}
+		arg := strings.TrimSpace(it[len(w):])
+		switch w {
+		case "width":
+			sp.width, sp.hasw = specDigits(arg, it), true
+		case "precision":
+			sp.prec, sp.hasprec = specDigits(arg, it), true
+		case "fill":
+			if len(arg) >= 2 && (arg[0] == '\'' || arg[0] == '"') && arg[len(arg)-1] == arg[0] {
+				arg = arg[1 : len(arg)-1]
+			}
+			r := []rune(arg)
+			if len(r) != 1 {
+				abort("f-string spec: `fill` takes one character")
+			}
+			sp.fill = r[0]
+		case "left":
+			sp.align = fmLeft
+		case "right":
+			sp.align = fmRight
+		case "center":
+			sp.align = fmCenter
+		case "zero":
+			if sp.fill == 0 {
+				sp.fill = '0'
+			}
+		case "hex":
+			sp.base = 16
+		case "oct":
+			sp.base = 8
+		case "bin":
+			sp.base = 2
+		case "upper":
+			sp.cs = fmUpper
+		case "lower":
+			sp.cs = fmLower
+		case "plus":
+			sp.sign = 1
+		case "space":
+			sp.sign = 2
+		case "minus":
+			sp.sign = 3
+		case "group":
+			sp.group = true
+		case "auto":
+			sp.style = 0
+		case "decimal":
+			sp.style = fmDecimal
+		case "scientific":
+			sp.style = fmScientific
+		case "percent":
+			sp.style = fmPercent
+		case "trim":
+			sp.trim = true
+		default:
+			abort("f-string spec: unknown flag `" + it + "`")
+		}
+	}
+	return sp
+}
+
+// splitSpec splits a spec at commas outside quotes.
+func splitSpec(s string) []string {
+	var out []string
+	st, q := 0, rune(0)
+	for i, r := range s {
+		switch {
+		case q != 0 && r == q:
+			q = 0
+		case q == 0 && (r == '\'' || r == '"'):
+			q = r
+		case q == 0 && r == ',':
+			out = append(out, s[st:i])
+			st = i + 1
+		}
+	}
+	return append(out, s[st:])
+}
+
+func isSpecWordRune(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
+}
+
+func specDigits(s, item string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		abort("f-string spec: `" + item + "` needs a non-negative number")
+	}
+	return n
+}
+
+// pack builds the word the runtime primitives read (fs_pack): the
+// alignment defaults to right for a number and left for text, and a '0'
+// fill with a width and no alignment written is the sign-aware one.
+func (sp fspec) pack(num bool) int64 {
+	al := sp.align
+	if al == -1 {
+		switch {
+		case sp.fill == '0' && sp.hasw:
+			al = fmSign
+		case num:
+			al = fmRight
+		default:
+			al = fmLeft
+		}
+	}
+	flags := sp.cs | sp.style
+	if sp.group {
+		flags |= fmGroup
+	}
+	if sp.sign == 1 {
+		flags |= fmPlus
+	}
+	if sp.sign == 2 {
+		flags |= fmSpace
+	}
+	prec := 0
+	if sp.hasprec {
+		prec = sp.prec + 1
+	}
+	return int64(sp.width&255) | int64(al&15)<<8 | int64(sp.base&31)<<12 |
+		(flags&262143)<<17 | int64(prec&255)<<35 | int64(sp.fill&2097151)<<43
 }
 
 // ─── Methods ───────────────────────────────────────────────────────────
@@ -830,6 +1023,48 @@ func (in *Interp) builtin(name string, argc int) builtinFn {
 	case "resid_rtmod_set", "resid_internals_set", "resid_quiet_set":
 		flag := strings.TrimSuffix(name, "_set")
 		return func(a []Value) Value { in.flags[flag] = a[0].(bool); return true }
+	// Raw memory, as the compiler uses it: a named global (the target word)
+	// read and written as 64-bit words. Globals get stable fake addresses;
+	// bytes live in rawmem, little-endian, zero until written.
+	case "resid_raw_global":
+		return func(a []Value) Value {
+			nm := sArg(a, 0)
+			if p, ok := in.globals[nm]; ok {
+				return p
+			}
+			p := in.nextGlb
+			in.globals[nm] = p
+			in.nextGlb += (iArg(a, 1) + 15) &^ 15
+			return p
+		}
+	case "resid_raw_load64", "resid_raw_load32", "resid_raw_load8":
+		n := map[string]int{"resid_raw_load64": 8, "resid_raw_load32": 4, "resid_raw_load8": 1}[name]
+		return func(a []Value) Value {
+			p := iArg(a, 0)
+			var v uint64
+			for i := n - 1; i >= 0; i-- {
+				v = v<<8 | uint64(in.rawmem[p+int64(i)])
+			}
+			return int64(v)
+		}
+	case "resid_raw_store64", "resid_raw_store32", "resid_raw_store8":
+		n := map[string]int{"resid_raw_store64": 8, "resid_raw_store32": 4, "resid_raw_store8": 1}[name]
+		return func(a []Value) Value {
+			p, v := iArg(a, 0), uint64(iArg(a, 1))
+			for i := 0; i < n; i++ {
+				in.rawmem[p+int64(i)] = byte(v >> (8 * i))
+			}
+			return int64(0)
+		}
+	case "resid_raw_syscall":
+		// Only getpid (39), which names the runtime cache's temporary file;
+		// any other system call is outside what residi models.
+		return func(a []Value) Value {
+			if nr := iArg(a, 0); nr != 39 {
+				abort(fmt.Sprintf("resid_raw_syscall %d is not supported", nr))
+			}
+			return int64(os.Getpid())
+		}
 	case "resid_raw_bits_f64":
 		return func(a []Value) Value { return math.Float64frombits(uint64(iArg(a, 0))) }
 	case "resid_raw_f64_bits":
